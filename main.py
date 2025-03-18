@@ -43,61 +43,71 @@ class MeetingOrganizer:
             print("Authenticated with OAuth")
             
     def find_free_time(self, attendees, duration_minutes=60, start_date=None, end_date=None, 
-                   work_hours=(9, 17), days_range=5, calendar_id='primary', timezone='UTC'):
-   
+               work_hours=(9, 17), days_range=5, calendar_id='primary', timezone='UTC'):
         if not self.service:
             raise Exception("Not authenticated. Call authenticate() first")
             
-        
         if not start_date:
             start_date = datetime.datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         if not end_date:
-            end_date = start_date + datetime.timedelta(days=days_range)        
+            end_date = start_date + datetime.timedelta(days=days_range)
         
         tz = pytz.timezone(timezone)
         if start_date.tzinfo is None:
             start_date = tz.localize(start_date)
         if end_date.tzinfo is None:
-            end_date = tz.localize(end_date)            
-        
+            end_date = tz.localize(end_date)
+
         time_min = start_date.astimezone(pytz.UTC).isoformat()
-        time_max = end_date.astimezone(pytz.UTC).isoformat()        
+        time_max = end_date.astimezone(pytz.UTC).isoformat()
         
+        items = [{"id": email} for email in attendees]
+        
+        current_user_email = self.service.calendars().get(calendarId='primary').execute().get('id')
+        if current_user_email and current_user_email not in attendees:
+            items.append({"id": "primary"})
+
         body = {
             "timeMin": time_min,
             "timeMax": time_max,
             "timeZone": timezone,
-            "items": [{"id": email} for email in attendees]
-        }        
+            "items": items
+        }
         
-        freebusy_response = self.service.freebusy().query(body=body).execute()        
+        freebusy_response = self.service.freebusy().query(body=body).execute()
         
+
         busy_times_all = []
-        for email, calendar_data in freebusy_response.get('calendars', {}).items():
+        calendars_data = freebusy_response.get('calendars', {})
+        
+        print("\nBusy periods found:")
+        for email, calendar_data in calendars_data.items():
             busy_times = calendar_data.get('busy', [])
-            busy_times_all.extend(busy_times)            
+
+                    
+            busy_times_all.extend(busy_times)
+        
+        if not busy_times_all:
+            print("\nNo busy periods found for any attendee.")
         
         time_slots = []
-        current_time = start_date
+        current_time = start_date        
+        time_increment = datetime.timedelta(minutes=30)        
         while current_time < end_date:
-            
             if (current_time.weekday() < 5 and  
-                work_hours[0] <= current_time.hour < work_hours[1]):                    
-                
+                work_hours[0] <= current_time.hour < work_hours[1]):
+                    
                 slot_end = current_time + datetime.timedelta(minutes=duration_minutes)
                 is_free = True
                 
                 for busy in busy_times_all:
-                    
                     busy_start = datetime.datetime.fromisoformat(busy['start'].replace('Z', '+00:00'))
                     busy_end = datetime.datetime.fromisoformat(busy['end'].replace('Z', '+00:00'))
                     
-                    
                     busy_start = busy_start.astimezone(tz)
                     busy_end = busy_end.astimezone(tz)
-                    
-                    
-                    if not (slot_end <= busy_start or current_time >= busy_end):
+
+                    if (current_time < busy_end and slot_end > busy_start):
                         is_free = False
                         break
                         
@@ -105,9 +115,9 @@ class MeetingOrganizer:
                     time_slots.append({
                         'start': current_time.isoformat(),
                         'end': slot_end.isoformat()
-                    })                    
-            
-            current_time += datetime.timedelta(minutes=30)
+                    })
+                    
+            current_time += time_increment
 
         return time_slots
         
