@@ -2,3 +2,4 @@
 pyproject.toml
 token.pickle
 credentials.json
+.vscode/settings.json
